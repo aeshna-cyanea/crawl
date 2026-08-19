@@ -44,7 +44,14 @@ const module_ = await factory({
     '-name', 'local',
     '-builddb',
   ],
-  wasmBinary,
+  // Emscripten 6 no longer reads Module.wasmBinary for async builds by
+  // default. Instantiate synchronously from the local bytes so this worker-
+  // only browser build can also run under Node without fetch/XHR shims.
+  instantiateWasm: (imports, receiveInstance) => {
+    const compiled = new WebAssembly.Module(wasmBinary)
+    const instance = new WebAssembly.Instance(compiled, imports)
+    receiveInstance(instance)
+  },
   getPreloadedPackage: () =>
     dataBuf.buffer.slice(dataBuf.byteOffset, dataBuf.byteOffset + dataBuf.byteLength),
   pocketzotOnOutput: () => {}, // -builddb emits nothing, but be safe
