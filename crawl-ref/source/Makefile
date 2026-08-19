@@ -1285,9 +1285,14 @@ GENERATED_FILES := $(GENERATED_HEADERS) art-data.h mi-enum.h \
 
 LANGUAGES = $(filter-out en, $(notdir $(wildcard dat/descript/??)))
 SRC_PKG_BASE  := stone_soup
+ifneq ($(strip $(CRAWL_VERSION_OVERRIDE)),)
+SRC_VERSION   := $(CRAWL_VERSION_OVERRIDE)
+RECENT_TAG    := $(CRAWL_VERSION_OVERRIDE)
+else
 SRC_VERSION   := $(shell git describe $(MERGE_BASE) 2>/dev/null || cat util/release_ver)
-MAJOR_VERSION = $(shell echo "$(SRC_VERSION)"|$(SED) -r 's/-.*//;s/^([^.]+\.[^.]+).*/\1/')
 RECENT_TAG    := $(shell git describe --abbrev=0 $(MERGE_BASE))
+endif
+MAJOR_VERSION = $(shell echo "$(SRC_VERSION)"|$(SED) -r 's/-.*//;s/^([^.]+\.[^.]+).*/\1/')
 WINARCH := $(shell $(GXX) -dumpmachine | grep -q x64_64 && echo win64 || echo win32)
 
 export SRC_VERSION
@@ -1348,7 +1353,7 @@ STATICFILES = $(TILEIMAGEFILES:%=webserver/game_data/static/%.png) \
 $(TILEINFOJS:%=$(RLTILES)/tileinfo-%.js): build-rltiles
 
 webserver/webtiles/version.txt: .ver
-	@git describe $(MERGE_BASE) > webserver/webtiles/version.txt
+	@printf '%s\n' '$(SRC_VERSION)' > webserver/webtiles/version.txt
 
 webserver/game_data/static/%.js: $(RLTILES)/%.js
 	$(QUIET_COPY)$(COPY) $< webserver/game_data/static/

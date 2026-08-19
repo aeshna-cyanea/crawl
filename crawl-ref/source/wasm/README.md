@@ -50,31 +50,93 @@ map.
 - New under `wasm/`: `pocketzot-ipc.h` (EM_JS bridge), `pre.js` (queue +
   headless argv + IDBFS mount + cache-seed hook), `fake-curses.h`,
   `include/term.h` (empty stub), `Makefile.emscripten`, `gen-objects.sh`,
-  `bake-caches.mjs` (pre-warms first-boot caches), `install.sh`.
+  `bake-caches.mjs` (pre-warms first-boot caches), and the package/release
+  scripts documented below.
 
 ## Building
 
+The normal release path is one command, run locally with an activated emsdk:
+
 ```sh
-# 1. host toolchain: emsdk active, PyYAML installed
-# 2. native build first, generates headers, rltiles data, levcomp, DBs.
-cd crawl-ref/source && make -j8 WEBTILES=y USE_MERGE_BASE=upstream/master
-# 3. derive the object list from the upstream link line:
+cd crawl-ref/source
+
+# Full clean build and local release candidate; does not contact GitHub.
+./wasm/release.sh --no-publish
+
+# Full clean build, then upload and publish a release on the origin fork.
+./wasm/release.sh
+```
+
+Both forms build natively, cross-compile, bake caches, package site assets,
+make the complete corresponding source archive, and write checksums. The
+publishing form additionally requires an authenticated GitHub CLI. It refuses
+a dirty checkout, missing or wrong submodules, a detached/non-`main` branch,
+an unpushed commit, an upstream `origin`, an existing release, or missing
+build tools. GitHub receives a draft first; it becomes public only after all
+four assets are present.
+
+Set `JOBS=N` or pass `--jobs N` to control local CPU use. Engine compilation
+does not run in GitHub Actions.
+
+For development, the equivalent manual build is:
+
+```sh
+# Host prerequisites: native Crawl dependencies, PyYAML, and emsdk active.
+cd crawl-ref/source
+export CRAWL_VERSION_OVERRIDE=$(cat wasm/crawl-version)
+
+# Native bootstrap generates headers, rltiles data, levcomp, and DBs.
+make -j8 WEBTILES=y
+# Derive the wasm object list from that native link line.
 ./wasm/gen-objects.sh
-# 4. cross-compile to wasm (Asyncify link is the slow step):
+# Cross-compile (the Asyncify link is the slow step).
 make -f wasm/Makefile.emscripten -j8
-# 5. pre-warm the first-boot caches (runs the wasm engine once under node
-#    with -builddb; must re-run after any dat/ or engine change):
+# Pre-warm first-boot caches; rerun after any dat/ or engine change.
 node wasm/bake-caches.mjs
-# 6. install artifacts into a PocketZot checkout (gitignored there):
-./wasm/install.sh ../../../pocketzot
+# Assemble a self-contained site payload under wasm/dist/site.
+./wasm/package-site-assets.sh
 ```
 
 Outputs (`wasm/dist/`): `crawl.js` (~217 KB glue), `crawl.wasm` (~23 MB),
 `crawl.data` (~11.6 MB preloaded `dat/`+`docs/`; `dat/tiles` excluded),
-`prewarm/` (~11 MB of pre-baked caches + manifest). install.sh also ships
-`enums.js` plus the tile atlases + tileinfo modules from
-`webserver/game_data/static/` (~8 MB) to the client's
-`public/gamedata/local/` — that is what makes tiles mode work offline.
+and `prewarm/` (~11 MB of pre-baked caches + manifest).
+`package-site-assets.sh` creates `wasm/dist/site/offline/` and
+`wasm/dist/site/gamedata/local/`, plus `release.json` with the Crawl version,
+engine commit, build ID, sizes, and SHA-256 of every shipped file. It never
+writes into a PocketZot client checkout. A client build can extract the
+released site archive at its output root. The argument-free `install.sh` is a
+compatibility alias for this self-contained packaging step; it rejects the old
+client-checkout argument to prevent accidental cross-repository writes.
+
+`wasm/dist/release/` contains:
+
+- `pocketzot-offline-<build>.tar.gz` — the deployable site payload;
+- `pocketzot-offline-<build>.json` — the payload manifest;
+- `pocketzot-engine-src-<version>-<build>.tar.gz` — complete corresponding
+  source, including every pinned dependency submodule;
+- `SHA256SUMS` — checksums for those three assets.
+
+The release tag is `engine-<build>`, where `<build>` remains the client's
+12-character content cache key derived from the raw wasm, data, and prewarm
+files.
+
+### Version provenance
+
+This repository is a direct fork of `crawl/crawl`, but local clones are
+intentionally shallow and PocketZot's own commits sit after the upstream base.
+Neither a shallow `git describe` nor one run at the engine commit therefore
+provides the desired Crawl identity. `wasm/crawl-base` records the exact
+upstream commit and `wasm/crawl-version` records its upstream `git describe`
+identity. `release.sh` exports the latter as `CRAWL_VERSION_OVERRIDE`, and the
+native Makefile uses it consistently for `build.h`, `.ver`, and WebTiles
+metadata. Update and verify both files whenever rebasing the port onto a newer
+Crawl commit; no build or deploy step needs Crawl's full local history.
+
+Run the fast release-tool fixtures without compiling the engine:
+
+```sh
+./wasm/test-release-tools.sh
+```
 
 Build-flag rationale lives in `Makefile.emscripten` next to the flags.
 
