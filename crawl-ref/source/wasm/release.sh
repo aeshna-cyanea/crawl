@@ -94,7 +94,7 @@ fi
 REPOSITORY=
 if [ "$PUBLISH" -eq 1 ]; then
     BRANCH=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-    [ "$BRANCH" = main ] || fail "publishing requires the engine main branch (current: ${BRANCH:-detached HEAD})"
+    [ "$BRANCH" = master ] || fail "publishing requires the engine master branch (current: ${BRANCH:-detached HEAD})"
 
     ORIGIN_URL=$(git -C "$ROOT" remote get-url --push origin)
     case "$ORIGIN_URL" in
@@ -124,9 +124,9 @@ if [ "$PUBLISH" -eq 1 ]; then
 
     gh auth status --hostname github.com >/dev/null
     echo "Checking that $HEAD is pushed to $REPOSITORY main..."
-    git -C "$ROOT" fetch --quiet --depth=1 --no-tags origin main
-    ORIGIN_HEAD=$(git -C "$ROOT" rev-parse refs/remotes/origin/main)
-    [ "$HEAD" = "$ORIGIN_HEAD" ] || fail "HEAD is not exactly origin/main; push the committed build inputs first"
+    git -C "$ROOT" fetch --quiet --depth=1 --no-tags origin master
+    ORIGIN_HEAD=$(git -C "$ROOT" rev-parse refs/remotes/origin/master)
+    [ "$HEAD" = "$ORIGIN_HEAD" ] || fail "HEAD is not exactly origin/master; push the committed build inputs first"
 fi
 
 echo "Building PocketZot engine $CRAWL_VERSION with $JOBS jobs..."
@@ -193,9 +193,9 @@ fi
 # GitHub. Build products are ignored, so any status here is an actual drift.
 [ "$HEAD" = "$(git -C "$ROOT" rev-parse HEAD)" ] || fail "HEAD changed during the build"
 [ -z "$(git -C "$ROOT" status --porcelain)" ] || fail "engine checkout changed during the build"
-git -C "$ROOT" fetch --quiet --depth=1 --no-tags origin main
-[ "$HEAD" = "$(git -C "$ROOT" rev-parse refs/remotes/origin/main)" ] \
-    || fail "origin/main changed during the build; inspect and rerun"
+git -C "$ROOT" fetch --quiet --depth=1 --no-tags origin master
+[ "$HEAD" = "$(git -C "$ROOT" rev-parse refs/remotes/origin/master)" ] \
+    || fail "origin/master changed during the build; inspect and rerun"
 
 TAG=engine-$BUILD
 REMOTE_TAGS=$(git -C "$ROOT" ls-remote --tags origin \
