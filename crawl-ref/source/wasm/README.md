@@ -50,12 +50,14 @@ map.
 - New under `wasm/`: `pocketzot-ipc.h` (EM_JS bridge), `pre.js` (queue +
   headless argv + IDBFS mount + cache-seed hook), `fake-curses.h`,
   `include/term.h` (empty stub), `Makefile.emscripten`, `gen-objects.sh`,
-  `bake-caches.mjs` (pre-warms first-boot caches), and the package/release
-  scripts documented below.
+  `latest-mtime.mjs` (portable cache-invalidation stamp), `bake-caches.mjs`
+  (pre-warms first-boot caches), and the package/release scripts documented
+  below.
 
 ## Building
 
-The normal release path is one command, run locally with an activated emsdk:
+The normal release path is one command, run locally with `emcc` and `em++` on
+`PATH` (an activated emsdk or a distribution Emscripten package both work):
 
 ```sh
 cd crawl-ref/source
@@ -70,7 +72,7 @@ cd crawl-ref/source
 Both forms build natively, cross-compile, bake caches, package site assets,
 make the complete corresponding source archive, and write checksums. The
 publishing form additionally requires an authenticated GitHub CLI. It refuses
-a dirty checkout, missing or wrong submodules, a detached/non-`main` branch,
+a dirty checkout, missing or wrong submodules, a detached/non-`master` branch,
 an unpushed commit, an upstream `origin`, an existing release, or missing
 build tools. GitHub receives a draft first; it becomes public only after all
 four assets are present.
@@ -100,6 +102,20 @@ node wasm/bake-caches.mjs
 Outputs (`wasm/dist/`): `crawl.js` (~217 KB glue), `crawl.wasm` (~23 MB),
 `crawl.data` (~11.6 MB preloaded `dat/`+`docs/`; `dat/tiles` excluded),
 and `prewarm/` (~11 MB of pre-baked caches + manifest).
+
+`bake-caches.mjs` runs the worker-only browser module under Node with
+`-builddb`, captures the generated description databases and des cache, and
+packs them into `prewarm.bin`. It loads `crawl.wasm` and `crawl.data` through
+Node's filesystem API and injects them into the module; the shipped
+`crawl.js` remains browser-worker-only and continues to fetch those files over
+HTTP. This explicit instantiation is required by Emscripten 6, whose async
+worker output no longer consumes `Module.wasmBinary` by default.
+
+The value baked into `POCKETZOT_DAT_STAMP` is computed by
+`latest-mtime.mjs`. Do not replace it with BSD-only `stat -f %m`: on GNU/Linux
+that command reports filesystem statistics rather than a file modification
+time and produces an invalid compiler definition.
+
 `package-site-assets.sh` creates `wasm/dist/site/offline/` and
 `wasm/dist/site/gamedata/local/`, plus `release.json` with the Crawl version,
 engine commit, build ID, sizes, and SHA-256 of every shipped file. It never
