@@ -43,7 +43,7 @@ DEFINES := -DUSE_TILE -DUSE_TILE_WEB -DWIZARD -DASSERTS -DCLUA_BINDINGS \
 # on every launch (a full ~13s rebuild). A constant keeps them valid across
 # boots; deriving it from the real dat mtimes still invalidates the caches
 # whenever the shipped data actually changes.
-DAT_STAMP := $(shell find dat ../docs -type f -exec stat -f %m {} + 2>/dev/null | sort -rn | head -1)
+DAT_STAMP := $(shell node wasm/latest-mtime.mjs dat ../docs)
 DEFINES += -DPOCKETZOT_DAT_STAMP=$(DAT_STAMP)
 
 INCLUDES := -Iutil -I. -Irltiles -isystem contrib/lua/src -isystem wasm/include

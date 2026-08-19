@@ -13,6 +13,23 @@ HEADER=$TMP/build.h
 BASE_FILE=$TMP/crawl-base
 mkdir -p "$RAW/prewarm" "$GAMEDATA"
 
+# Data stamps must be portable across GNU/Linux and BSD/macOS, and must
+# mirror `find -type f` by ignoring symlinks.
+MTIME_TREE=$TMP/mtime-tree
+mkdir -p "$MTIME_TREE/nested"
+printf 'older\n' > "$MTIME_TREE/older"
+printf 'newer\n' > "$MTIME_TREE/nested/newer"
+printf 'newest but linked\n' > "$TMP/symlink-target"
+node - "$MTIME_TREE/older" "$MTIME_TREE/nested/newer" "$TMP/symlink-target" <<'NODE'
+const fs = require('node:fs')
+const paths = process.argv.slice(2)
+fs.utimesSync(paths[0], 1_700_000_100, 1_700_000_100)
+fs.utimesSync(paths[1], 1_700_000_200, 1_700_000_200)
+fs.utimesSync(paths[2], 1_700_000_300, 1_700_000_300)
+NODE
+ln -s "$TMP/symlink-target" "$MTIME_TREE/linked"
+[ "$(node wasm/latest-mtime.mjs "$MTIME_TREE")" = 1700000200 ]
+
 printf 'javascript glue\n' > "$RAW/crawl.js"
 printf 'wasm bytes\n' > "$RAW/crawl.wasm"
 printf 'data bytes\n' > "$RAW/crawl.data"
