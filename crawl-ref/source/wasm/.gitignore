@@ -1,0 +1,5 @@
+# Build products: objects/deps (build/) and the linked artifacts + baked
+# prewarm pack (dist/) — installed into a PocketZot checkout by install.sh,
+# never committed (GPL build outputs are deploy-time content there too).
+build/
+dist/

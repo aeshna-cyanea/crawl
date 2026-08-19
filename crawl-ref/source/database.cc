@@ -19,7 +19,11 @@
 #include "end.h"
 #include "files.h"
 #include "libutil.h"
+#include "message.h"
 #include "options.h"
+#ifdef __EMSCRIPTEN__
+#include "tileweb.h" // tiles.flush_messages() for the cache-build progress
+#endif
 #include "random.h"
 #include "stringutil.h"
 #include "syscalls.h"
@@ -296,6 +300,14 @@ void TextDB::_regenerate_db()
 #endif
         mprf(MSGCH_PLAIN, "Regenerating db: %s", _db_name);
     }
+#ifdef __EMSCRIPTEN__
+    // Pre-cio_init nothing else flushes; stream per-DB progress to the
+    // client during the one-time first-launch cache build. flush_messages
+    // is what actually releases the line: the client worker batches
+    // output on that signal, and mid-build no microtask fallback can run.
+    webtiles_send_messages();
+    tiles.flush_messages();
+#endif
 
     string db_path = _db_cache_path(_db_name, lang());
     string full_db_path = db_path + ".db";

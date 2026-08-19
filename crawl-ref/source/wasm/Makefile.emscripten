@@ -1,0 +1,125 @@
+# PocketZot WASM engine build. Run from crawl-ref/source:
+#
+#   make -f wasm/Makefile.emscripten -j8
+#
+# Prerequisites:
+#  - emsdk environment active (em++/emcc on PATH)
+#  - a completed native `make WEBTILES=y` (generates art-data.h, mon-data.h,
+#    levcomp.*.cc, rltiles/tiledef-*.cc, dat/dlua/tags.lua, ...)
+#  - wasm/objects.txt (run wasm/gen-objects.sh once after the native build)
+#
+# Design:
+#  - WEBTILES=y equivalent defines; headless mode at runtime (-headless argv)
+#  - the Unix-socket IPC is replaced by wasm/pocketzot-ipc.h + wasm/pre.js
+#  - curses satisfied by wasm/fake-curses.h via upstream CURSES_INCLUDE_FILE
+#  - zlib + sqlite from Emscripten ports; interpreted C-Lua from contrib
+#  - Asyncify for the single blocking input site (tileweb.cc await_input)
+
+CXX := em++
+CC := emcc
+
+OBJDIR := wasm/build
+OUTDIR := wasm/dist
+
+# Game objects, derived from the upstream link line (gen-objects.sh).
+GAME_OBJS := $(addprefix $(OBJDIR)/,$(shell cat wasm/objects.txt))
+
+# Interpreted C-Lua from contrib (LuaJIT cannot target wasm); lua.c/luac.c
+# are the standalone interpreter/compiler mains — exclude.
+LUA_SRCS := $(filter-out contrib/lua/src/lua.c contrib/lua/src/luac.c,\
+    $(wildcard contrib/lua/src/*.c))
+LUA_OBJS := $(addprefix $(OBJDIR)/,$(LUA_SRCS:.c=.o))
+
+# DGL_EXTENDED_LOGFILES: pre-rendered tmsg/vmsg death sentences in the xlog
+# (scores/logfile) for the client's character cards — standalone define, does
+# NOT imply DGAMELAUNCH.
+DEFINES := -DUSE_TILE -DUSE_TILE_WEB -DWIZARD -DASSERTS -DCLUA_BINDINGS \
+    -DDGL_EXTENDED_LOGFILES \
+    -DCURSES_INCLUDE_FILE='"wasm/fake-curses.h"'
+
+# Newest real mtime in the shipped data tree, baked into file_modtime()'s
+# per-build constant (files.cc): preloaded MEMFS files get fresh mtimes each
+# boot, which would invalidate the IDBFS-cached description DBs + des cache
+# on every launch (a full ~13s rebuild). A constant keeps them valid across
+# boots; deriving it from the real dat mtimes still invalidates the caches
+# whenever the shipped data actually changes.
+DAT_STAMP := $(shell find dat ../docs -type f -exec stat -f %m {} + 2>/dev/null | sort -rn | head -1)
+DEFINES += -DPOCKETZOT_DAT_STAMP=$(DAT_STAMP)
+
+INCLUDES := -Iutil -I. -Irltiles -isystem contrib/lua/src -isystem wasm/include
+
+PORTS := -sUSE_ZLIB=1 -sUSE_SQLITE3=1
+
+WARN := -Wall -Wformat-security -Wno-implicit-fallthrough -Wno-unqualified-std-cast-call
+
+CXXFLAGS := -std=c++11 -O2 -pipe -fexceptions $(DEFINES) $(INCLUDES) $(PORTS) $(WARN)
+CFLAGS := -O2 -pipe $(PORTS)
+
+# Link. Notes on the load-bearing flags:
+#  - ASYNCIFY: the engine blocks in pocketzot_await_message() (EM_ASYNC_JS).
+#    Stack sized generously for crawl's deep levelgen/lua call chains; tune
+#    empirically if RuntimeError:unreachable ever surfaces from a suspension.
+#  - EXPORT_ES6/worker/MODULARIZE: matches the PocketZot engine.worker.ts
+#    contract (default-export factory, EXPORT_NAME irrelevant under ES6).
+#  - EXIT_RUNTIME: main() returning must fire Module.onExit (the client's
+#    game_ended synthesis hangs off it).
+#  - IDBFS: the writable /crawl mount (saves/morgue/db caches) — wasm/pre.js.
+#  - GROWABLE_ARRAYBUFFERS=0: required — Emscripten 6 defaults it on, and the
+#    resizable-ArrayBuffer path throws "Resizable ArrayBuffer is not allowed"
+#    in current WebKit. Off, ALLOW_MEMORY_GROWTH still works.
+#  - -fexceptions (compile + link): crawl uses C++ exceptions for level-gen
+#    retry.
+#  - The dat/ tree ships in crawl.data via --preload-file; docs/ ships too
+#    (help screens read it at runtime).
+LDFLAGS := -O2 -fexceptions \
+    -sASYNCIFY=1 \
+    -sASYNCIFY_STACK_SIZE=4194304 \
+    -sSTACK_SIZE=8388608 \
+    -sINITIAL_MEMORY=67108864 \
+    -sALLOW_MEMORY_GROWTH=1 \
+    -sMAXIMUM_MEMORY=536870912 \
+    -sGROWABLE_ARRAYBUFFERS=0 \
+    -sMODULARIZE=1 \
+    -sEXPORT_ES6=1 \
+    -sENVIRONMENT=worker \
+    -sEXIT_RUNTIME=1 \
+    -sEXPORTED_RUNTIME_METHODS=UTF8ToString,stringToUTF8,lengthBytesUTF8,FS \
+    -sEXPORTED_FUNCTIONS=_main,_malloc,_free \
+    -sUSE_ZLIB=1 -sUSE_SQLITE3=1 \
+    -lidbfs.js \
+    --pre-js wasm/pre.js \
+    --preload-file dat@/dat \
+    --exclude-file '*dat/tiles/*' \
+    --preload-file ../docs@/docs
+
+# dat/tiles (~18 MB of the ~31 MB bundle) is excluded above: those PNGs are
+# build-time tilegen inputs and desktop-tiles textures — the headless
+# webtiles binary compiles its tile data in (rltiles/tiledef-*.cc) and never
+# opens them. The client draws from the atlas sheets in
+# webserver/game_data/static/, shipped separately by install.sh.
+
+all: $(OUTDIR)/crawl.js
+
+$(OUTDIR)/crawl.js: $(GAME_OBJS) $(LUA_OBJS) wasm/pre.js
+	@mkdir -p $(OUTDIR)
+	$(CXX) $(GAME_OBJS) $(LUA_OBJS) $(LDFLAGS) -o $@
+
+# Re-bake files.o when the dat stamp changes (make can't see -D changes).
+STAMPFILE := $(OBJDIR)/dat-stamp
+$(shell mkdir -p $(OBJDIR); [ "$$(cat $(STAMPFILE) 2>/dev/null)" = "$(DAT_STAMP)" ] || echo $(DAT_STAMP) > $(STAMPFILE))
+$(OBJDIR)/files.o: $(STAMPFILE)
+
+$(OBJDIR)/%.o: %.cc
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJDIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -MMD -c $< -o $@
+
+clean:
+	rm -rf $(OBJDIR) $(OUTDIR)
+
+-include $(shell find $(OBJDIR) -name '*.d' 2>/dev/null)
+
+.PHONY: all clean

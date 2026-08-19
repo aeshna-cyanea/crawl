@@ -247,6 +247,13 @@ protected:
     wint_t _handle_control_message(sockaddr_un addr, string data);
     wint_t _receive_control_message();
 
+#ifdef __EMSCRIPTEN__
+    // A client-requested checkpoint save, latched until the player has
+    // control (see _maybe_checkpoint).
+    bool m_checkpoint_pending;
+    void _maybe_checkpoint();
+#endif
+
     struct JsonFrame
     {
         int start;

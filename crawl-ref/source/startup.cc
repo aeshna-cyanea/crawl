@@ -57,6 +57,9 @@
  #include "tilepick-p.h"
 #endif
 #include "tileview.h"
+#ifdef __EMSCRIPTEN__
+#include "tileweb.h" // tiles.flush_messages() for the cache-build progress
+#endif
 #include "traps.h" // set_shafted
 #include "viewchar.h"
 #include "view.h"
@@ -76,6 +79,16 @@ static void _loading_message(string m)
     mpr(m.c_str());
 #ifdef USE_TILE_LOCAL
     loading_screen_update_msg(m.c_str());
+#endif
+#ifdef __EMSCRIPTEN__
+    // First-ever launch builds the description DBs and des cache right
+    // here, before cio_init — push the stored messages out now (nothing
+    // else flushes during the build) so the client log shows progress
+    // instead of a silent black screen. The explicit flush_messages
+    // matters: the client worker batches output lines per flush signal,
+    // and mid-build there is no event loop to fall back on.
+    webtiles_send_messages();
+    tiles.flush_messages();
 #endif
 }
 
