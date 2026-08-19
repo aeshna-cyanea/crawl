@@ -1,3 +1,13 @@
+# PocketZot engine
+
+This repository is PocketZot's direct DCSS fork and WebAssembly port. Local
+checkouts may remain shallow; the fork relationship preserves upstream
+ancestry on GitHub without requiring developers or CI to download Crawl's full
+history. Engine releases are built locally so the PocketZot Pages workflow
+only has to assemble static files. See the
+[WASM build and release guide](crawl-ref/source/wasm/README.md) for the guarded
+one-command build, packaging layout, release assets, and version provenance.
+
 [![Build Status](https://github.com/crawl/crawl/workflows/Build/badge.svg)](https://github.com/crawl/crawl/actions/)
 
 # Dungeon Crawl Stone Soup

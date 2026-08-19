@@ -96,7 +96,7 @@ LDFLAGS := -O2 -fexceptions \
 # build-time tilegen inputs and desktop-tiles textures — the headless
 # webtiles binary compiles its tile data in (rltiles/tiledef-*.cc) and never
 # opens them. The client draws from the atlas sheets in
-# webserver/game_data/static/, shipped separately by install.sh.
+# webserver/game_data/static/, shipped by package-site-assets.sh.
 
 all: $(OUTDIR)/crawl.js
 
