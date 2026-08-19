@@ -60,6 +60,9 @@
 #include "rltiles/tiledef-main.h"
 #include "rltiles/tiledef-player.h"
 #include "tilepick.h"
+#ifdef __EMSCRIPTEN__
+#include "wasm/pocketzot-ipc.h"
+#endif
 #include "tilepick-p.h"
 #include "tileview.h"
 #include "transform.h"
@@ -89,6 +92,9 @@ TilesFramework tiles;
 TilesFramework::TilesFramework() :
       m_controlled_from_web(false),
       _send_lock(false),
+#ifdef __EMSCRIPTEN__
+      m_checkpoint_pending(false),
+#endif
       m_last_ui_state(UI_INIT),
       m_view_loaded(false),
       m_current_view(coord_def(GXM, GYM)),
@@ -134,6 +140,12 @@ bool TilesFramework::initialise()
     if (m_sock_name.empty())
         return true;
 
+#ifdef __EMSCRIPTEN__
+    // The JS message queue replaces the Unix socket (wasm/pocketzot-ipc.h);
+    // m_sock stays unused. m_sock_name still must be non-empty (a dummy
+    // -webtiles-socket argument) so the m_sock_name.empty() guards keep the
+    // webtiles paths live.
+#else
     // Init socket
     m_sock = socket(PF_UNIX, SOCK_DGRAM, 0);
     if (m_sock < 0)
@@ -155,6 +167,7 @@ bool TilesFramework::initialise()
     tv.tv_usec = 0;
     if (setsockopt(m_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0)
         die("Can't set send timeout!");
+#endif // !__EMSCRIPTEN__
 
     if (m_await_connection)
         _await_connection();
@@ -204,6 +217,12 @@ void TilesFramework::finish_message()
     }
 
     m_msg_buf.append("\n");
+#ifdef __EMSCRIPTEN__
+    pocketzot_emit(m_msg_buf.data(), (int) m_msg_buf.size());
+    m_msg_buf.clear();
+    m_need_flush = true;
+    return;
+#endif
     const char* fragment_start = m_msg_buf.data();
     const char* data_end = m_msg_buf.data() + m_msg_buf.size();
 #ifdef DEBUG_WEBSOCKETS
@@ -331,7 +350,12 @@ void TilesFramework::_await_connection()
         return;
 
     while (m_dest_addrs.size() == 0)
+    {
+#ifdef __EMSCRIPTEN__
+        pocketzot_await_message();
+#endif
         _receive_control_message();
+    }
 }
 
 wint_t TilesFramework::_receive_control_message()
@@ -339,6 +363,24 @@ wint_t TilesFramework::_receive_control_message()
     if (m_sock_name.empty())
         return 0;
 
+#ifdef __EMSCRIPTEN__
+    char *popped = pocketzot_pop_message();
+    if (!popped)
+        return 0;
+    string data(popped);
+    free(popped);
+    sockaddr_un srcaddr;
+    memset(&srcaddr, 0, sizeof(struct sockaddr_un));
+    try
+    {
+        return _handle_control_message(srcaddr, data);
+    }
+    catch (JsonWrapper::MalformedException&)
+    {
+        dprf("Malformed control message!");
+        return 0;
+    }
+#else
     char buf[4096]; // Should be enough for client->server messages
     sockaddr_un srcaddr;
     socklen_t srcaddr_len;
@@ -364,6 +406,7 @@ wint_t TilesFramework::_receive_control_message()
         dprf("Malformed control message!");
         return 0;
     }
+#endif // !__EMSCRIPTEN__
 }
 
 static int _handle_cell_target(const coord_def &gc)
@@ -472,6 +515,13 @@ wint_t TilesFramework::_handle_control_message(sockaddr_un addr, string data)
         _send_everything();
         flush_messages();
     }
+#ifdef __EMSCRIPTEN__
+    else if (msgtype == "checkpoint")
+    {
+        m_checkpoint_pending = true;
+        _maybe_checkpoint();
+    }
+#endif
     else if (msgtype == "menu_hover")
     {
         JsonWrapper hover = json_find_member(obj.node, "hover");
@@ -634,6 +684,54 @@ wint_t TilesFramework::_handle_control_message(sockaddr_un addr, string data)
     return c;
 }
 
+#ifdef __EMSCRIPTEN__
+// Perform a checkpoint save the client asked for (the browser backgrounding
+// the tab -- the analog of Android's SDLActivity.onPause save, syscalls.cc),
+// deferred until the player has control: waiting_for_command ||
+// waiting_for_ui, the same test the terminal resize handlers use
+// (libunix.cc / libw32c.cc). Deferring means a checkpoint can never land on
+// a state the player never had control over -- the rollback bug 12ac2028
+// fixed for level entry. A refusal that is merely early keeps the request
+// latched for a later poll; one that is already satisfied or can never be
+// served clears it -- see the groups below.
+void TilesFramework::_maybe_checkpoint()
+{
+    if (!m_checkpoint_pending)
+        return;
+    // Not the player's moment yet: keep the request for the next poll.
+    if (!crawl_state.waiting_for_command && !crawl_state.waiting_for_ui)
+        return;
+
+    // Already being served: a save is running (we are here from a nested
+    // getchm inside it), or saving is off for this game entirely. Retrying
+    // would mean a second, redundant save the moment the first one returns.
+    if (crawl_state.saving_game || Options.no_save
+        || crawl_state.disables[DIS_SAVE_CHECKPOINTS])
+    {
+        m_checkpoint_pending = false;
+        return;
+    }
+
+    // Not yet, or not any more: pre-game, post-game, or mid-excursion.
+    // entering_level/generating_level cover the level-excursion windows, where
+    // you.depth/where_are_you/position/chapter are unwound to something the
+    // player is not standing in but on_current_level still reads stale (it is
+    // only recomputed at the end of the excursion, files.cc) -- saving there
+    // would commit a "you" chunk describing a floor nobody is on.
+    if (!you.save || !crawl_state.need_save || !you.on_current_level
+        || you.entering_level || crawl_state.generating_level)
+    {
+        return;
+    }
+
+    m_checkpoint_pending = false;
+
+    // The commit inside this emits the starred `checkpoint` line the host
+    // waits for (pocketzot_persist, wasm/pocketzot-ipc.h).
+    save_game(false);
+}
+#endif
+
 wint_t TilesFramework::try_await_input()
 {
     if (m_sock_name.empty())
@@ -643,6 +741,16 @@ wint_t TilesFramework::try_await_input()
     if (c != 0)
         return c;
 
+#ifdef __EMSCRIPTEN__
+    _maybe_checkpoint();
+    while (pocketzot_has_message())
+    {
+        c = _receive_control_message();
+        if (c != 0)
+            return c;
+    }
+    return 0;
+#else
     fd_set fds;
     int result;
     while (true)
@@ -665,6 +773,7 @@ wint_t TilesFramework::try_await_input()
         if (c != 0)
             return c;
     }
+#endif // !__EMSCRIPTEN__
 }
 
 struct save_signal_mask
@@ -691,6 +800,22 @@ wint_t TilesFramework::await_input(bool(*has_console_input)())
     if (c != 0)
         return c;
 
+#ifdef __EMSCRIPTEN__
+    while (true)
+    {
+        // Before going idle, not after: this is the point where the engine
+        // has nothing left to do and the player owes it a key, which is the
+        // safest moment available to write a save.
+        _maybe_checkpoint();
+        tiles.flush_messages();
+        if (has_console_input())
+            return 0;
+        pocketzot_await_message();
+        c = _receive_control_message();
+        if (c != 0)
+            return c;
+    }
+#else
     int result;
     fd_set fds;
     int maxfd = m_sock;
@@ -735,6 +860,7 @@ wint_t TilesFramework::await_input(bool(*has_console_input)())
         else
             die("select error: %s", strerror(errno));
     }
+#endif // !__EMSCRIPTEN__
 }
 
 void TilesFramework::dump()
@@ -2223,11 +2349,26 @@ void TilesFramework::_send_everything()
     // _send_map(true) only sends the full map to the newly connected
     // spectator but resets the dirty flags. So make sure the player's
     // map data is up to date first.
+#ifdef __EMSCRIPTEN__
+    // Upstream only reaches here with a live game on screen (spectators join
+    // mid-game). The PocketZot boot handshake can trigger it before the
+    // first viewwindow of a resumed save: sending map state built from the
+    // undrawn m_next_view then poisons the diff cache (m_current_view is
+    // assigned pre-draw content, the client got a glyphless mf-only dump,
+    // and later sends only carry per-turn diffs — the map stays black).
+    // Pre-view there is nothing real to send; the first redraw() after the
+    // view loads emits everything as ordinary dirty cells.
+    if (m_view_loaded)
+    {
+#endif
     const bool sent_full_map = m_need_full_map;
     _send_map(false);
     // If we didn't send the full map, send it to the new spectator
     if (!sent_full_map)
         _send_map(true);
+#ifdef __EMSCRIPTEN__
+    }
+#endif
 
     // Menus
     json_open_object();

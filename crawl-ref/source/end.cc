@@ -45,6 +45,11 @@
 #include <android/log.h>
 #endif
 
+#ifdef __EMSCRIPTEN__
+// wasm/pocketzot-ipc.h (definition emitted via tileweb.cc's single include).
+extern "C" bool pocketzot_persist();
+#endif
+
 using namespace ui;
 
 /**
@@ -194,6 +199,17 @@ NORETURN void end(int exit_code, bool print_error, const char *format, ...)
     CrawlIsExiting = true;
     if (exit_code)
         CrawlIsCrashing = true;
+
+#ifdef __EMSCRIPTEN__
+    // Final IDBFS flush: catches everything a commit doesn't — the unlinked
+    // save after a death (or it would resurrect next boot), morgue/scores/
+    // bones, and the closed sqlite DBs (databaseSystemShutdown ran above).
+    // The C++ side is exiting but the JS runtime is healthy, so this is safe
+    // even on the error paths. Whole-mount flush only — the checkpoint
+    // announcement is commit()'s; see pocketzot_checkpoint in
+    // wasm/pocketzot-ipc.h.
+    pocketzot_persist();
+#endif
 
 #ifdef DEBUG_GLOBALS
     delete real_env;         real_env = 0;

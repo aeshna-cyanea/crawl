@@ -324,6 +324,44 @@ string change_file_extension(const string &filename, const string &ext)
     return (pos == string::npos? filename : filename.substr(0, pos)) + ext;
 }
 
+#ifdef __EMSCRIPTEN__
+// Emscripten's preloaded MEMFS stamps every bundled file (dat/, docs/) with
+// a fresh mtime on each boot, so every mtime-stamped cache — the description
+// text DBs (database.cc) and the des/vault cache (maps.cc), both stored on
+// the persistent IDBFS save mount — would look stale on every launch and
+// trigger a full multi-second rebuild (measured ~13s: yyparse over all of
+// dat/des plus DB regeneration). The bundle is immutable for a given build,
+// so report a per-build constant for everything outside the writable /crawl
+// mount instead. POCKETZOT_DAT_STAMP is injected by wasm/Makefile.emscripten
+// from the newest real mtime in the dat tree, so editing game data still
+// invalidates caches; save files under /crawl keep their true mtimes.
+#ifndef POCKETZOT_DAT_STAMP
+#define POCKETZOT_DAT_STAMP 1
+#endif
+
+// Every caller of either overload passes a preload-bundle path (dat/docs
+// staleness inputs — database.cc and maps.cc); nothing consults real save
+// mtimes through here. Don't try to classify the path — resolution can
+// prefix bundle files through the save dir ("/crawl/../dat/...") — just
+// report the constant whenever the file exists.
+time_t file_modtime(const string &file)
+{
+    struct stat filestat;
+    if (stat(file.c_str(), &filestat))
+        return 0;
+
+    return POCKETZOT_DAT_STAMP;
+}
+
+time_t file_modtime(FILE *f)
+{
+    struct stat filestat;
+    if (fstat(fileno(f), &filestat))
+        return 0;
+
+    return POCKETZOT_DAT_STAMP;
+}
+#else
 time_t file_modtime(const string &file)
 {
     struct stat filestat;
@@ -341,6 +379,7 @@ time_t file_modtime(FILE *f)
 
     return filestat.st_mtime;
 }
+#endif
 
 static bool _create_directory(const char *dir)
 {
@@ -2675,8 +2714,17 @@ void save_game(bool leave_game, const char *farewellmsg)
     // If just save, early out.
     if (!leave_game)
     {
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
         // Save everything before pause
+        //
+        // Android saves here on SDLActivity.onPause; Emscripten needs it for
+        // the same lifecycle reason -- a backgrounded tab can be discarded
+        // without warning, so a checkpoint has to be a whole one. Note the
+        // level chunk in particular: without it a checkpoint saves the player
+        // but not the floor they are standing on, which is the "very
+        // inconsistent player / level state" 12ac2028 fixed for sprint.
+        // Callers that save the level themselves first (world_reacts's
+        // post-level-entry / sprint checkpoint, main.cc) just write it twice.
         clua.save_persist();
         if (crawl_state.unsaved_macros)
             macro_save();

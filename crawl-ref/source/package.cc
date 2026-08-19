@@ -39,6 +39,12 @@ Notes:
 #include "syscalls.h"
 #include "libutil.h" // map_find
 
+#ifdef __EMSCRIPTEN__
+// wasm/pocketzot-ipc.h (definitions emitted via tileweb.cc's single include).
+extern "C" bool pocketzot_persist();
+extern "C" void pocketzot_checkpoint();
+#endif
+
 // debugging defines
 #undef  FSCK_VERBOSE
 #undef  COSTLY_ASSERTS
@@ -266,6 +272,16 @@ void package::commit()
 
 #ifdef COSTLY_ASSERTS
     fsck();
+#endif
+
+#ifdef __EMSCRIPTEN__
+    // A commit is the save's consistency point: flush the batched IDBFS
+    // mount now (blocks via Asyncify until IndexedDB has it), so a tab
+    // death after this line can never lose or tear the committed state.
+    // Announce the checkpoint only once the flush has actually landed --
+    // rationale in wasm/pocketzot-ipc.h (pocketzot_checkpoint).
+    if (pocketzot_persist())
+        pocketzot_checkpoint();
 #endif
 }
 

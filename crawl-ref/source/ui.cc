@@ -2545,8 +2545,21 @@ void UIRoot::render()
     }
 #endif
 
+#ifdef __EMSCRIPTEN__
+    // PocketZot: headless does not mean unwatched. CRT-rendered ui popups
+    // (the skill menu and friends) reach webtiles clients through the
+    // console paint below — putwch mirrors every glyph into the tiles text
+    // area, which redraw() then ships as a txt message. Upstream's headless
+    // skip is for bots/tests with no viewer; here it left the pushed crt
+    // frame permanently empty (a black screen client-side). The whole
+    // console path is headless-safe: the curses side of each call is a
+    // guarded no-op, only the tiles mirroring does work.
+    if (!needs_paint)
+        return;
+#else
     if (!needs_paint || in_headless_mode())
         return;
+#endif
 
 #ifdef USE_TILE_LOCAL
     glmanager->reset_view_for_redraw();
