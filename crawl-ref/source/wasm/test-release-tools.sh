@@ -6,6 +6,19 @@ SOURCE=$PWD
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
+# Publishing must remain an explicit opt-in. Help is a no-tool, no-build path
+# so this catches an accidental CLI inversion without compiling the engine.
+./wasm/release.sh --help > "$TMP/release-help" 2>&1
+grep -F -- '--publish' "$TMP/release-help" >/dev/null
+if grep -F -- '--no-publish' "$TMP/release-help" >/dev/null; then
+    echo "error: release help still advertises publishing by default" >&2
+    exit 1
+fi
+if ./wasm/release.sh --no-publish > "$TMP/removed-option" 2>&1; then
+    echo "error: removed --no-publish option was accepted" >&2
+    exit 1
+fi
+
 RAW=$TMP/raw
 GAMEDATA=$TMP/gamedata
 SITE=$TMP/site
