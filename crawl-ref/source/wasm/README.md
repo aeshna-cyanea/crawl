@@ -63,15 +63,16 @@ The normal release path is one command, run locally with `emcc` and `em++` on
 cd crawl-ref/source
 
 # Full clean build and local release candidate; does not contact GitHub.
-./wasm/release.sh --no-publish
+./wasm/release.sh
 
 # Full clean build, then upload and publish a release on the origin fork.
-./wasm/release.sh
+./wasm/release.sh --publish
 ```
 
 Both forms build natively, cross-compile, bake caches, package site assets,
-make the complete corresponding source archive, and write checksums. The
-publishing form additionally requires an authenticated GitHub CLI. It refuses
+make the complete corresponding source archive, and write checksums. The local
+build does not require GitHub CLI. The `--publish` form additionally requires
+an installed and authenticated `gh` command. It refuses
 a dirty checkout, missing or wrong submodules, a detached/non-`master` branch,
 an unpushed commit, an upstream `origin`, an existing release, or missing
 build tools. GitHub receives a draft first; it becomes public only after all

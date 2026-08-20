@@ -1,12 +1,13 @@
 #!/bin/sh
-# Build the offline engine locally, package the static site payload and its
-# complete source, then publish both as an atomic (draft-first) GitHub Release.
+# Build the offline engine locally and package the static site payload and its
+# complete source. Publishing the candidate as a draft-first GitHub Release is
+# an explicit opt-in.
 set -eu
 
 cd "$(dirname "$0")/.."
 SOURCE=$PWD
 ROOT=$(cd ../.. && pwd)
-PUBLISH=1
+PUBLISH=0
 JOBS=${JOBS:-}
 
 fail() {
@@ -15,24 +16,35 @@ fail() {
 }
 
 usage() {
-    cat >&2 <<'EOF'
-usage: ./wasm/release.sh [--no-publish] [--jobs N]
+    status=${1:-2}
+    if [ "$status" -eq 0 ]; then
+        print_usage
+    else
+        print_usage >&2
+    fi
+    exit "$status"
+}
 
-  --no-publish  perform the full clean build and create release files locally
-  --jobs N      parallel compiler jobs (default: nproc/getconf result)
+print_usage() {
+    cat <<'EOF'
+usage: ./wasm/release.sh [--publish] [--jobs N]
+
+  --publish  upload and publish the completed candidate with GitHub CLI
+  --jobs N   parallel compiler jobs (default: nproc/getconf result)
+
+Without --publish, release files are created locally and GitHub is not used.
 EOF
-    exit 2
 }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --no-publish) PUBLISH=0 ;;
+        --publish) PUBLISH=1 ;;
         --jobs)
             [ "$#" -ge 2 ] || usage
             JOBS=$2
             shift
             ;;
-        -h|--help) usage ;;
+        -h|--help) usage 0 ;;
         *) usage ;;
     esac
     shift
@@ -185,7 +197,7 @@ ls -lh "$RELEASE_DIR/$ARCHIVE_NAME" "$RELEASE_DIR/$MANIFEST_NAME" \
     "$SOURCE_ARCHIVE" "$RELEASE_DIR/SHA256SUMS"
 
 if [ "$PUBLISH" -eq 0 ]; then
-    echo "Skipped GitHub upload (--no-publish)."
+    echo "Skipped GitHub upload (pass --publish to publish this candidate)."
     exit 0
 fi
 
